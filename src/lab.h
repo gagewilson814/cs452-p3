@@ -1,8 +1,10 @@
 #ifndef LAB_H
 #define LAB_H
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -12,58 +14,66 @@ extern "C" {
  * 2^DEFAULT_K
  */
 #define DEFAULT_K 30
+
 /**
  * The minimum size of the buddy memory pool.
  */
 #define MIN_K 20
+
 /**
  * The maximum size of the buddy memory pool. This is 1 larger than needed
  * to allow indexes 1-N instead of 0-N. Internally the maximum amount of
  * memory is MAX_K-1
  */
 #define MAX_K 48
+
 /**
  * The smallest memory block size that can be returned by buddy_malloc value
  * must be large enough to account for the avail header.
  */
 #define SMALLEST_K 6
+
 #define BLOCK_AVAIL 1    /*Block is available to allocate*/
 #define BLOCK_RESERVED 0 /*Block has been handed to user*/
 #define BLOCK_UNUSED 3   /*Block is not used at all*/
+
 /**
  * Struct to represent the table of all available blocks do not reorder members
  * of this struct because internal calculations depend on the ordering.
  */
 struct avail {
-  unsigned short int tag;  /*Tag for block status BLOCK_AVAIL,
-   BLOCK_RESERVED*/
+  unsigned short int tag;  /*Tag for block status BLOCK_AVAIL, BLOCK_RESERVED*/
   unsigned short int kval; /*The kval of this block*/
   struct avail *next;      /*next memory block*/
   struct avail *prev;      /*prev memory block*/
 };
+
 /**
  * The buddy memory pool.
  */
 struct buddy_pool {
-  size_t kval_m;             /*The max kval of this pool*/
-  size_t numbytes;           /*The number of bytes this pool is managing*/
-  void *base;                /*Base address used to scale memory for buddy calculations*/
+  size_t kval_m;   /*The max kval of this pool*/
+  size_t numbytes; /*The number of bytes this pool is managing*/
+  void *base;      /*Base address used to scale memory for buddy calculations*/
   struct avail avail[MAX_K]; /*The array of available memory blocks*/
 };
+
 /**
  * Converts bytes to its equivalent K value defined as bytes <= 2^K
  * @param bytes The bytes needed
  * @return K The number of bytes expressed as 2^K
  */
 size_t btok(size_t bytes);
+
 /**
-* Find the buddy of a given pointer and kval relative to the base address we got
-from mmap
-* @param pool The memory pool to work on (needed for the base addresses)
-* @param buddy The memory block that we want to find the buddy for
-* @return A pointer to the buddy
-*/
+ * Find the buddy of a given pointer and kval relative to the base address we
+ * got from mmap
+ * @param pool The memory pool to work on (needed for the base addresses)
+ * @param buddy The memory block that we want to find the buddy for
+ * @return A pointer to the buddy
+ */
 struct avail *buddy_calc(struct buddy_pool *pool, struct avail *buddy);
+
 /**
  * Allocates a block of size bytes of memory, returning a pointer to
  * the beginning of the block. The content of the newly allocated block
@@ -77,6 +87,7 @@ struct avail *buddy_calc(struct buddy_pool *pool, struct avail *buddy);
  * @return A pointer to the memory block
  */
 void *buddy_malloc(struct buddy_pool *pool, size_t size);
+
 /**
  * A block of memory previously allocated by a call to malloc,
  * calloc or realloc is deallocated, making it available again
@@ -93,6 +104,7 @@ void *buddy_malloc(struct buddy_pool *pool, size_t size);
  * @param ptr Pointer to the memory block to free
  */
 void buddy_free(struct buddy_pool *pool, void *ptr);
+
 /**
  * Changes the size of the memory block pointed to by ptr.
  * The function may move the memory block to a new location
@@ -106,7 +118,7 @@ void buddy_free(struct buddy_pool *pool, void *ptr);
  * like malloc, assigning a new block of size bytes and
  * returning a pointer to its beginning.
  *
- * if size is equal to zero, and ptr is not NULL, then the call
+ * if size is equal to zero, and ptr is not NULL, then the  call
  * is equivalent to free(ptr)
  *
  * @param pool The memory pool
@@ -115,6 +127,7 @@ void buddy_free(struct buddy_pool *pool, void *ptr);
  * @return Pointer to the new memory block
  */
 void *buddy_realloc(struct buddy_pool *pool, void *ptr, size_t size);
+
 /**
  * Initialize a new memory pool using the buddy algorithm. Internally,
  * this function uses mmap to get a block of memory to manage so should be
@@ -135,6 +148,7 @@ void *buddy_realloc(struct buddy_pool *pool, void *ptr, size_t size);
  * @param pool A pointer to the pool to initialize
  */
 void buddy_init(struct buddy_pool *pool, size_t size);
+
 /**
  * Inverse of buddy_init.
  *
@@ -144,6 +158,7 @@ void buddy_init(struct buddy_pool *pool, size_t size);
  * @param pool The memory pool to destroy
  */
 void buddy_destroy(struct buddy_pool *pool);
+
 /**
  * @brief Entry to a main function for testing purposes
  *
@@ -152,7 +167,9 @@ void buddy_destroy(struct buddy_pool *pool);
  * @return exit status
  */
 int myMain(int argc, char **argv);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif
+
 #endif
