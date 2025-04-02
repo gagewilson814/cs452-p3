@@ -29,7 +29,16 @@
  * @return size_t the K value that will fit bytes
  */
 size_t btok(size_t bytes) {
-  // DO NOT use math.pow
+
+  // add the header to the amount of bytes passed in
+  size_t totalSize = bytes + sizeof(struct avail);
+
+  size_t k = SMALLEST_K;
+  while ((UINT64_C(1) << k) < totalSize) {
+    k++;
+  }
+
+  return k;
 }
 
 struct avail *buddy_calc(struct buddy_pool *pool, struct avail *buddy) {}
