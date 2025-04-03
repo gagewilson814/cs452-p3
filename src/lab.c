@@ -30,6 +30,10 @@
  */
 size_t btok(size_t bytes) {
 
+  if (bytes == 0) {
+    return SMALLEST_K;
+  }
+
   // add the header to the amount of bytes passed in
   size_t totalSize = bytes + sizeof(struct avail);
 
