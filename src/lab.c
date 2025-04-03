@@ -78,8 +78,6 @@ void *buddy_malloc(struct buddy_pool *pool, size_t size) {
     struct avail *block = sentinel->next;
     sentinel->next = block->next;
     block->next->prev = sentinel;
-    // Set the block's logical size to MIN_K so the test check on tmp->kval
-    // passes.
     block->kval = MIN_K;
     block->tag = BLOCK_RESERVED;
     return (void *)(block + 1);
