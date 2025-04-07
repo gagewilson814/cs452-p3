@@ -32,12 +32,12 @@ size_t btok(size_t bytes) {
 
   // If no bytes are requested, return 0 immediately.
   if (bytes == 0) {
-    return 0;
+    return UINT64_C(0);
   }
 
-  size_t kVal = 0;
+  size_t kVal = UINT64_C(0);
   // Start with the smallest power-of-two value (2^0 = 1).
-  for (size_t value = 1; value < bytes; value <<= 1) {
+  for (size_t value = UINT64_C(1); value < bytes; value <<= UINT64_C(1)) {
     kVal++;
   }
   return kVal;
@@ -135,7 +135,7 @@ void *buddy_malloc(struct buddy_pool *pool, size_t size) {
   block = recursive_split(pool, block, current_k, required_k);
 
   // Return pointer to user-accessible memory (skip the metadata header).
-  return (void *)(block + 1);
+  return (void *)(block + UINT64_C(1));
 }
 
 
@@ -146,7 +146,7 @@ void buddy_free(struct buddy_pool *pool, void *ptr) {
   }
 
   // Retrieve the block header.
-  struct avail *block = ((struct avail *)ptr) - 1;
+  struct avail *block = ((struct avail *)ptr) - UINT64_C(1);
   block->tag = BLOCK_AVAIL;
 
   // Attempt to merge with buddy as long as possible.
