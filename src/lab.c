@@ -69,64 +69,75 @@ struct avail *buddy_calc(struct buddy_pool *pool, struct avail *buddy) {
   return buddyBlockPtr;
 }
 
-void *buddy_malloc(struct buddy_pool *pool, size_t size) {
-    // Validate input parameters.
-    if (pool == NULL || size == 0) {
-        errno = EINVAL;
-        return NULL;
-    }
-
-    // Calculate the total size needed (user data + metadata header).
-    size_t total_size = size + sizeof(struct avail);
-
-    // Determine the minimum block size (k value) required.
-    size_t required_k = btok(total_size);
-    if (required_k < SMALLEST_K) {
-        required_k = SMALLEST_K;
-    }
-
-    // Find the smallest free block that can accommodate the required size.
-    size_t current_k = required_k;
-    while (current_k <= pool->kval_m && 
-           pool->avail[current_k].next == &pool->avail[current_k]) {
-        current_k++;
-    }
-
-    // If no block is available, set error and return NULL.
-    if (current_k > pool->kval_m) {
-        errno = ENOMEM;
-        return NULL;
-    }
-
-    // Remove the block from the free list.
-    struct avail *block = pool->avail[current_k].next;
-    block->prev->next = block->next;
-    block->next->prev = block->prev;
-
-    // Split the block until reaching the desired block size.
-    while (current_k > required_k) {
-        current_k--;
-        size_t block_size = (size_t)1 << current_k;
-
-        // Compute the address of the buddy block using byte-wise arithmetic.
-        struct avail *buddy = (struct avail *)((char *)block + block_size);
-        buddy->kval = current_k;
-        buddy->tag = BLOCK_AVAIL;
-
-        // Insert the buddy block into the free list for the current_k level.
-        buddy->next = pool->avail[current_k].next;
-        buddy->prev = &pool->avail[current_k];
-        pool->avail[current_k].next->prev = buddy;
-        pool->avail[current_k].next = buddy;
-    }
-
-    // Mark the block as reserved and set its k value.
+static struct avail *recursive_split(struct buddy_pool *pool, struct avail *block,
+                                       size_t current_k, size_t required_k) {
+  if (current_k == required_k) {
+    // Base case: block is exactly the size we need.
     block->tag = BLOCK_RESERVED;
     block->kval = required_k;
+    return block;
+  }
 
-    // Return a pointer to the user-accessible portion (skipping metadata header).
-    return (void *)(block + 1);
+  // Otherwise, split the block.
+  current_k--; // Decrease the size by one exponent.
+  size_t block_size = (size_t)1 << current_k;
+
+  // Compute the address of the buddy block.
+  struct avail *buddy = (struct avail *)((char *)block + block_size);
+  buddy->kval = current_k;
+  buddy->tag = BLOCK_AVAIL;
+
+  // Insert the buddy block into the free list for the current_k level.
+  buddy->next = pool->avail[current_k].next;
+  buddy->prev = &pool->avail[current_k];
+  pool->avail[current_k].next->prev = buddy;
+  pool->avail[current_k].next = buddy;
+
+  // Recursively split the original block.
+  return recursive_split(pool, block, current_k, required_k);
 }
+
+void *buddy_malloc(struct buddy_pool *pool, size_t size) {
+  // Validate input parameters.
+  if (pool == NULL || size == 0) {
+    errno = EINVAL;
+    return NULL;
+  }
+
+  // Calculate the total size needed (user data + metadata header).
+  size_t total_size = size + sizeof(struct avail);
+
+  // Determine the minimum block size (k value) required.
+  size_t required_k = btok(total_size);
+  if (required_k < SMALLEST_K) {
+    required_k = SMALLEST_K;
+  }
+
+  // Find the smallest free block that can accommodate the required size.
+  size_t current_k = required_k;
+  while (current_k <= pool->kval_m &&
+         pool->avail[current_k].next == &pool->avail[current_k]) {
+    current_k++;
+  }
+
+  // If no block is available, set error and return NULL.
+  if (current_k > pool->kval_m) {
+    errno = ENOMEM;
+    return NULL;
+  }
+
+  // Remove the block from the free list.
+  struct avail *block = pool->avail[current_k].next;
+  block->prev->next = block->next;
+  block->next->prev = block->prev;
+
+  // Recursively split the block until it matches the required size.
+  block = recursive_split(pool, block, current_k, required_k);
+
+  // Return pointer to user-accessible memory (skip the metadata header).
+  return (void *)(block + 1);
+}
+
 
 
 void buddy_free(struct buddy_pool *pool, void *ptr) {
