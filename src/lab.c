@@ -30,22 +30,25 @@
  */
 size_t btok(size_t bytes) {
 
+  // If no bytes are requested, return 0 immediately.
   if (bytes == 0) {
-    return SMALLEST_K;
+    return 0;
   }
 
-  // add the header to the amount of bytes passed in
-  size_t totalSize = bytes + sizeof(struct avail);
-
-  size_t k = SMALLEST_K;
-  while ((UINT64_C(1) << k) < totalSize) {
-    k++;
+  size_t kVal = 0;
+  // Start with the smallest power-of-two value (2^0 = 1).
+  for (size_t value = 1; value < bytes; value <<= 1) {
+    kVal++;
   }
-
-  return k;
+  return kVal;
 }
 
 struct avail *buddy_calc(struct buddy_pool *pool, struct avail *buddy) {
+  // Add validation
+  if (pool == NULL || buddy == NULL) {
+    return NULL;
+  }
+
   uintptr_t base = (uintptr_t)pool->base;
   uintptr_t block = (uintptr_t)buddy;
   uintptr_t offset = block - base;                  // calculate offset
@@ -67,62 +70,64 @@ struct avail *buddy_calc(struct buddy_pool *pool, struct avail *buddy) {
 }
 
 void *buddy_malloc(struct buddy_pool *pool, size_t size) {
-  if (pool == NULL || size == 0) {
-    errno = ENOMEM;
-    return NULL;
-  }
-
-  // Determine the minimum block exponent that fits the requested size plus
-  // header.
-  size_t reqK = btok(size);
-
-  if (((size + sizeof(struct avail)) << 1) == pool->numbytes) {
-    // Remove the block from the highest level free list.
-    struct avail *sentinel = &pool->avail[pool->kval_m];
-    struct avail *block = sentinel->next;
-    sentinel->next = block->next;
-    block->next->prev = sentinel;
-    block->kval = MIN_K;
-    block->tag = BLOCK_RESERVED;
-    return (void *)(block + 1);
-  }
-
-  size_t k;
-  for (k = reqK; k <= pool->kval_m; k++) {
-    if (pool->avail[k].next != &pool->avail[k]) {
-      break;
+    // Validate input parameters.
+    if (pool == NULL || size == 0) {
+        errno = EINVAL;
+        return NULL;
     }
-  }
-  if (k > pool->kval_m) {
-    errno = ENOMEM;
-    return NULL;
-  }
 
-  // Remove the block from the free list at level k.
-  struct avail *sentinel = &pool->avail[k];
-  struct avail *block = sentinel->next;
-  sentinel->next = block->next;
-  block->next->prev = sentinel;
+    // Calculate the total size needed (user data + metadata header).
+    size_t total_size = size + sizeof(struct avail);
 
-  // Split the block until it reaches the required level.
-  while (k > reqK) {
-    k--;
-    block->kval = k;
-    // Calculate the buddy's address.
-    struct avail *buddy =
-        (struct avail *)((uintptr_t)block + (UINT64_C(1) << k));
-    buddy->kval = k;
-    buddy->tag = BLOCK_AVAIL;
-    // Insert the buddy into the free list for level k.
-    buddy->next = pool->avail[k].next;
-    buddy->prev = &pool->avail[k];
-    pool->avail[k].next->prev = buddy;
-    pool->avail[k].next = buddy;
-  }
+    // Determine the minimum block size (k value) required.
+    size_t required_k = btok(total_size);
+    if (required_k < SMALLEST_K) {
+        required_k = SMALLEST_K;
+    }
 
-  block->tag = BLOCK_RESERVED;
-  return (void *)(block + 1);
+    // Find the smallest free block that can accommodate the required size.
+    size_t current_k = required_k;
+    while (current_k <= pool->kval_m && 
+           pool->avail[current_k].next == &pool->avail[current_k]) {
+        current_k++;
+    }
+
+    // If no block is available, set error and return NULL.
+    if (current_k > pool->kval_m) {
+        errno = ENOMEM;
+        return NULL;
+    }
+
+    // Remove the block from the free list.
+    struct avail *block = pool->avail[current_k].next;
+    block->prev->next = block->next;
+    block->next->prev = block->prev;
+
+    // Split the block until reaching the desired block size.
+    while (current_k > required_k) {
+        current_k--;
+        size_t block_size = (size_t)1 << current_k;
+
+        // Compute the address of the buddy block using byte-wise arithmetic.
+        struct avail *buddy = (struct avail *)((char *)block + block_size);
+        buddy->kval = current_k;
+        buddy->tag = BLOCK_AVAIL;
+
+        // Insert the buddy block into the free list for the current_k level.
+        buddy->next = pool->avail[current_k].next;
+        buddy->prev = &pool->avail[current_k];
+        pool->avail[current_k].next->prev = buddy;
+        pool->avail[current_k].next = buddy;
+    }
+
+    // Mark the block as reserved and set its k value.
+    block->tag = BLOCK_RESERVED;
+    block->kval = required_k;
+
+    // Return a pointer to the user-accessible portion (skipping metadata header).
+    return (void *)(block + 1);
 }
+
 
 void buddy_free(struct buddy_pool *pool, void *ptr) {
   if (pool == NULL || ptr == NULL) {
@@ -148,10 +153,7 @@ void buddy_free(struct buddy_pool *pool, void *ptr) {
     block->kval++;
   }
 
-  if (pool->numbytes == (UINT64_C(1) << (MIN_K + 1)) && block->kval == MIN_K) {
-    block->kval = pool->kval_m;
-  }
-
+  // Add the block to the appropriate free list
   size_t k = block->kval;
   block->next = pool->avail[k].next;
   block->prev = &pool->avail[k];
@@ -159,17 +161,13 @@ void buddy_free(struct buddy_pool *pool, void *ptr) {
   pool->avail[k].next = block;
 }
 
-/**
- * @brief This is a simple version of realloc.
- *
- * @param poolThe memory pool
- * @param ptr  The user memory
- * @param size the new size requested
- * @return void* pointer to the new user memory
- */
+#define UNUSED(x) (void)x
 void *buddy_realloc(struct buddy_pool *pool, void *ptr, size_t size) {
-  // Required for Grad Students
-  // Optional for Undergrad Students
+  UNUSED(pool);
+  UNUSED(ptr);
+  UNUSED(size);
+  errno = ENOSYS; // Not implemented.
+  return NULL;
 }
 
 void buddy_init(struct buddy_pool *pool, size_t size) {
@@ -233,15 +231,15 @@ void buddy_destroy(struct buddy_pool *pool) {
  * This function can be useful to visualize the bits in a block. This can
  * help when figuring out the buddy_calc function!
  */
-static void printb(unsigned long int b) {
-  size_t bits = sizeof(b) * 8;
-  unsigned long int curr = UINT64_C(1) << (bits - 1);
-  for (size_t i = 0; i < bits; i++) {
-    if (b & curr) {
-      printf("1");
-    } else {
-      printf("0");
-    }
-    curr >>= 1L;
-  }
-}
+// static void printb(unsigned long int b) {
+//   size_t bits = sizeof(b) * 8;
+//   unsigned long int curr = UINT64_C(1) << (bits - 1);
+//   for (size_t i = 0; i < bits; i++) {
+//     if (b & curr) {
+//       printf("1");
+//     } else {
+//       printf("0");
+//     }
+//     curr >>= 1L;
+//   }
+// }
