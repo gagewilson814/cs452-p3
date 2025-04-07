@@ -80,7 +80,7 @@ static struct avail *recursive_split(struct buddy_pool *pool, struct avail *bloc
 
   // Otherwise, split the block.
   current_k--; // Decrease the size by one exponent.
-  size_t block_size = (size_t)1 << current_k;
+  size_t block_size = UINT64_C(1) << current_k;
 
   // Compute the address of the buddy block.
   struct avail *buddy = (struct avail *)((char *)block + block_size);
