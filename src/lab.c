@@ -36,7 +36,7 @@ size_t btok(size_t bytes) {
   }
 
   size_t kVal = UINT64_C(0);
-  // Start with the smallest power-of-two value (2^0 = 1).
+  // Start with the smallest power-of-two value and increase to fit
   for (size_t value = UINT64_C(1); value < bytes; value <<= UINT64_C(1)) {
     kVal++;
   }
@@ -44,7 +44,6 @@ size_t btok(size_t bytes) {
 }
 
 struct avail *buddy_calc(struct buddy_pool *pool, struct avail *buddy) {
-  // Add validation
   if (pool == NULL || buddy == NULL) {
     return NULL;
   }
@@ -57,127 +56,100 @@ struct avail *buddy_calc(struct buddy_pool *pool, struct avail *buddy) {
   uintptr_t buddyBlock = base + buddyOffset;
   struct avail *buddyBlockPtr = (struct avail *)buddyBlock; // cast to avail
 
-  // Check if the buddy block is within the bounds of the pool
-  if (buddyBlock < base || buddyBlock >= base + pool->numbytes) {
-    return NULL;
-  }
-  // Check if the buddy block is available
-  if (buddyBlockPtr->tag != BLOCK_AVAIL) {
-    return NULL;
-  }
-
   return buddyBlockPtr;
 }
 
-static struct avail *recursive_split(struct buddy_pool *pool, struct avail *block,
-                                       size_t current_k, size_t required_k) {
-  if (current_k == required_k) {
-    // Base case: block is exactly the size we need.
-    block->tag = BLOCK_RESERVED;
-    block->kval = required_k;
-    return block;
-  }
-
-  // Otherwise, split the block.
-  current_k--; // Decrease the size by one exponent.
-  size_t block_size = UINT64_C(1) << current_k;
-
-  // Compute the address of the buddy block.
-  struct avail *buddy = (struct avail *)((char *)block + block_size);
-  buddy->kval = current_k;
-  buddy->tag = BLOCK_AVAIL;
-
-  // Insert the buddy block into the free list for the current_k level.
-  buddy->next = pool->avail[current_k].next;
-  buddy->prev = &pool->avail[current_k];
-  pool->avail[current_k].next->prev = buddy;
-  pool->avail[current_k].next = buddy;
-
-  // Recursively split the original block.
-  return recursive_split(pool, block, current_k, required_k);
-}
-
 void *buddy_malloc(struct buddy_pool *pool, size_t size) {
-  // Validate input parameters.
-  if (pool == NULL || size == 0) {
-    errno = EINVAL;
-    return NULL;
+
+  // get the kval for the requested size with enough room for the tag and kval
+  // fields
+  size_t k = btok(size + sizeof(struct avail));
+
+  // R1 Find a block
+  struct avail *L = NULL;
+  size_t j = 0;
+  for (j = k; j <= pool->kval_m; j++) {
+    if (pool->avail[j].next != &pool->avail[j]) {
+      L = pool->avail[j].next;
+      break;
+    }
   }
 
-  // Calculate the total size needed (user data + metadata header).
-  size_t total_size = size + sizeof(struct avail);
-
-  // Determine the minimum block size (k value) required.
-  size_t required_k = btok(total_size);
-  if (required_k < SMALLEST_K) {
-    required_k = SMALLEST_K;
-  }
-
-  // Find the smallest free block that can accommodate the required size.
-  size_t current_k = required_k;
-  while (current_k <= pool->kval_m &&
-         pool->avail[current_k].next == &pool->avail[current_k]) {
-    current_k++;
-  }
-
-  // If no block is available, set error and return NULL.
-  if (current_k > pool->kval_m) {
+  // There was not enough memory to satisfy the request thus we need to set
+  // error and return NULL
+  if (L == NULL) {
     errno = ENOMEM;
     return NULL;
   }
 
-  // Remove the block from the free list.
-  struct avail *block = pool->avail[current_k].next;
-  block->prev->next = block->next;
-  block->next->prev = block->prev;
+  // R2 Remove from list
+  L->prev->next = L->next;
+  L->next->prev = L->prev;
+  L->tag = BLOCK_RESERVED;
 
-  // Recursively split the block until it matches the required size.
-  block = recursive_split(pool, block, current_k, required_k);
+  char *P = (char *)L;
 
-  // Return pointer to user-accessible memory (skip the metadata header).
-  return (void *)(block + UINT64_C(1));
+  // R3 Split required?
+  while (j > k) {
+    j--;
+
+    size_t new_size = UINT64_C(1) << j;
+
+    struct avail *buddy = (struct avail *)(P + new_size);
+    buddy->tag = BLOCK_AVAIL;
+    buddy->kval = j;
+
+    buddy->next = pool->avail[j].next;
+    buddy->prev = &pool->avail[j];
+    pool->avail[j].next->prev = buddy;
+    pool->avail[j].next = buddy;
+
+    ((struct avail *)P)->kval = j;
+  }
+
+  return (void *)P + sizeof(struct avail);
 }
 
-
-
 void buddy_free(struct buddy_pool *pool, void *ptr) {
-  if (pool == NULL || ptr == NULL) {
+  if (ptr == NULL || pool == NULL) {
     return;
   }
 
-  // Retrieve the block header.
-  struct avail *block = ((struct avail *)ptr) - UINT64_C(1);
-  block->tag = BLOCK_AVAIL;
+  struct avail *L = (struct avail *)ptr - UINT64_C(1);
 
-  // Attempt to merge with buddy as long as possible.
-  while (block->kval < pool->kval_m) {
-    struct avail *buddy = buddy_calc(pool, block);
-    if (buddy == NULL || buddy->kval != block->kval) {
+  L->tag = BLOCK_AVAIL;
+  size_t k = L->kval;
+
+  while (k < pool->kval_m) {
+    struct avail *P = buddy_calc(pool, L);
+    if (P == NULL || P->tag == BLOCK_RESERVED ||
+        (P->tag == BLOCK_AVAIL && P->kval != k)) {
       break;
     }
-    // Remove buddy from its free list.
-    buddy->prev->next = buddy->next;
-    buddy->next->prev = buddy->prev;
-    if ((uintptr_t)buddy < (uintptr_t)block) {
-      block = buddy;
-    }
-    block->kval++;
+
+    P->prev->next = P->next;
+    P->next->prev = P->prev;
+
+    if ((uintptr_t)P < (uintptr_t)L)
+      L = P;
+
+    k++;
+    L->kval = k;
   }
 
-  // Add the block to the appropriate free list
-  size_t k = block->kval;
-  block->next = pool->avail[k].next;
-  block->prev = &pool->avail[k];
-  pool->avail[k].next->prev = block;
-  pool->avail[k].next = block;
+  L->next = pool->avail[k].next;
+  L->prev = &pool->avail[k];
+  pool->avail[k].next->prev = L;
+  pool->avail[k].next = L;
 }
 
+// Didn't implement as it's optional for undergrad
 #define UNUSED(x) (void)x
 void *buddy_realloc(struct buddy_pool *pool, void *ptr, size_t size) {
   UNUSED(pool);
   UNUSED(ptr);
   UNUSED(size);
-  errno = ENOSYS; // Not implemented.
+  errno = ENOSYS;
   return NULL;
 }
 
@@ -209,10 +181,10 @@ void buddy_init(struct buddy_pool *pool, size_t size) {
     handle_error_and_die("buddy_init avail array mmap failed");
   }
 
-  // Set all blocks to empty. We are using circular lists so the first elements
-  // just point to an available block. Thus the tag, and kval feild are unused
-  // burning a small bit of memory but making the code more readable. We mark
-  // these blocks as UNUSED to aid in debugging.
+  // Set all blocks to empty. We are using circular lists so the first
+  // elements just point to an available block. Thus the tag, and kval feild
+  // are unused burning a small bit of memory but making the code more
+  // readable. We mark these blocks as UNUSED to aid in debugging.
   for (size_t i = 0; i <= kval; i++) {
     pool->avail[i].next = pool->avail[i].prev = &pool->avail[i];
     pool->avail[i].kval = i;
