@@ -65,9 +65,10 @@ void *buddy_malloc(struct buddy_pool *pool, size_t size) {
   // fields
   size_t k = btok(size + sizeof(struct avail));
 
-  // R1 Find a block
   struct avail *L = NULL;
   size_t j = 0;
+
+  // R1 Find a block
   for (j = k; j <= pool->kval_m; j++) {
     if (pool->avail[j].next != &pool->avail[j]) {
       L = pool->avail[j].next;
@@ -115,28 +116,39 @@ void buddy_free(struct buddy_pool *pool, void *ptr) {
     return;
   }
 
+  // Get the block metadata by subtracting the size of the metadata structure
   struct avail *L = (struct avail *)ptr - UINT64_C(1);
 
+  // Mark the block as available
   L->tag = BLOCK_AVAIL;
   size_t k = L->kval;
 
+  // Attempt to coalesce with buddy blocks
   while (k < pool->kval_m) {
+    // Calculate the buddy block for the current block
     struct avail *P = buddy_calc(pool, L);
+
+    // If the buddy block is NULL, reserved, or not the same size, stop
+    // coalescing
     if (P == NULL || P->tag == BLOCK_RESERVED ||
         (P->tag == BLOCK_AVAIL && P->kval != k)) {
       break;
     }
 
+    // Remove the buddy block from its free list
     P->prev->next = P->next;
     P->next->prev = P->prev;
 
+    // Ensure L points to the lower address between the two blocks
     if ((uintptr_t)P < (uintptr_t)L)
       L = P;
 
+    // Increase the block size and update the kval
     k++;
     L->kval = k;
   }
 
+  // Add the coalesced block back to the appropriate free list
   L->next = pool->avail[k].next;
   L->prev = &pool->avail[k];
   pool->avail[k].next->prev = L;
