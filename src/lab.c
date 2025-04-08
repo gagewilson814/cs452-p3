@@ -45,6 +45,7 @@ size_t btok(size_t bytes) {
 
 struct avail *buddy_calc(struct buddy_pool *pool, struct avail *buddy) {
   if (pool == NULL || buddy == NULL) {
+    errno = ENOMEM;
     return NULL;
   }
 
@@ -55,6 +56,11 @@ struct avail *buddy_calc(struct buddy_pool *pool, struct avail *buddy) {
   uintptr_t buddyOffset = offset ^ blockSize;       // calculate buddy offset
   uintptr_t buddyBlock = base + buddyOffset;
   struct avail *buddyBlockPtr = (struct avail *)buddyBlock; // cast to avail
+
+  if (buddyBlockPtr == NULL) {
+    errno = ENOMEM;
+    return NULL;
+  }
 
   return buddyBlockPtr;
 }
@@ -96,7 +102,9 @@ void *buddy_malloc(struct buddy_pool *pool, size_t size) {
 
     size_t new_size = UINT64_C(1) << j;
 
+    // calculate buddy block for splitting
     struct avail *buddy = (struct avail *)(P + new_size);
+
     buddy->tag = BLOCK_AVAIL;
     buddy->kval = j;
 
@@ -116,7 +124,7 @@ void buddy_free(struct buddy_pool *pool, void *ptr) {
     return;
   }
 
-  // Get the block metadata by subtracting the size of the metadata structure
+  // Get the block metadata
   struct avail *L = (struct avail *)ptr - UINT64_C(1);
 
   // Mark the block as available
